@@ -60,7 +60,8 @@ class BleService extends ChangeNotifier {
   static final Guid _shimanoSwitchCharUuid =
       Guid('ad0a1002-6101-414a-a001-0010c2e6f477');
 
-  // Both service UUIDs used for scan filtering so we catch any Di2 generation.
+  // Both service UUIDs kept here for reference / future re-enabling of scan filter.
+  // ignore: unused_element
   List<Guid> get _scanServiceUuids => [_dFlyServiceUuid, _shimanoServiceUuid];
 
   // ── Public API ─────────────────────────────────────────────────────────────
