@@ -23,12 +23,19 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Build IPA (no code signing)
-        run: flutter build ipa --no-codesign --release
+      - name: Build iOS (no code signing)
+        run: flutter build ios --release --no-codesign
+
+      - name: Package IPA
+        run: |
+          mkdir -p build/ios/ipa/Payload
+          cp -r build/ios/Release-iphoneos/Runner.app build/ios/ipa/Payload/Runner.app
+          cd build/ios/ipa
+          zip -r bell.ipa Payload
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: bell-ios
-          path: build/ios/ipa/*.ipa
+          path: build/ios/ipa/bell.ipa
           retention-days: 30
