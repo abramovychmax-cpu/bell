@@ -10,7 +10,7 @@ import 'storage_service.dart';
 
 enum BleStatus { off, idle, scanning, connecting, connected, disconnected }
 
-/// Battery-efficient BLE manager for the Shimano EW-WU111.
+/// Battery-efficient BLE manager for Shimano Di2 (RD-R8150 / EW-WU111).
 ///
 /// Design principles
 /// ─────────────────
@@ -38,13 +38,21 @@ class BleService extends ChangeNotifier {
   int _reconnectDelayMs = 2000;
   static const int _maxReconnectDelayMs = 60000;
 
-  // Known Shimano D-Fly BLE service / characteristic (community reverse-engineered).
-  // The app also subscribes to ALL notify characteristics as a fallback for
-  // different EW-WU111 firmware versions.
+  // ── Shimano BLE service / characteristic UUIDs ────────────────────────────
+  // Legacy D-Fly (EW-WU111, SM-EWW01, older junction boxes)
   static final Guid _dFlyServiceUuid =
       Guid('a026ee01-0a7d-4ab3-97fa-f1500f9feb8b');
   static final Guid _dFlyButtonCharUuid =
       Guid('a026e002-0a7d-4ab3-97fa-f1500f9feb8b');
+
+  // Shimano proprietary (RD-R8150, RD-R9250 and 12-speed Di2 in general)
+  static final Guid _shimanoServiceUuid =
+      Guid('ad0a1000-6101-414a-a001-0010c2e6f477');
+  static final Guid _shimanoDataCharUuid =
+      Guid('ad0a1001-6101-414a-a001-0010c2e6f477');
+
+  // Both service UUIDs used for scan filtering so we catch any Di2 generation.
+  List<Guid> get _scanServiceUuids => [_dFlyServiceUuid, _shimanoServiceUuid];
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
@@ -56,12 +64,15 @@ class BleService extends ChangeNotifier {
   }
 
   /// Returns a stream of scan results for the pairing screen.
+  /// Filters by Shimano service UUIDs — catches both legacy D-Fly (EW-WU111)
+  /// and 12-speed proprietary (RD-R8150 / RD-R9250).
   Stream<ScanResult> scan({int timeoutSec = 15}) {
     _setStatus(BleStatus.scanning);
-    Log.i('BLE', 'Starting scan (no filter — show all devices)');
+    Log.i('BLE', 'Starting scan filtered by Shimano service UUIDs');
     FlutterBluePlus.startScan(
       timeout: Duration(seconds: timeoutSec),
       androidScanMode: AndroidScanMode.lowPower,
+      withServices: _scanServiceUuids,
     );
     return FlutterBluePlus.scanResults.expand((list) => list);
   }
@@ -137,12 +148,14 @@ class BleService extends ChangeNotifier {
     final services = await device.discoverServices();
     Log.i('BLE', 'Discovered ${services.length} services');
     for (final svc in services) {
-      final isKnownSvc = svc.serviceUuid == _dFlyServiceUuid;
-      Log.i('BLE', '  service ${svc.serviceUuid}${isKnownSvc ? " ← D-Fly ✓" : ""}');
+      final isKnownSvc = svc.serviceUuid == _dFlyServiceUuid ||
+          svc.serviceUuid == _shimanoServiceUuid;
+      Log.i('BLE', '  service ${svc.serviceUuid}${isKnownSvc ? " ← Shimano ✓" : ""}');
       for (final char in svc.characteristics) {
         if (!char.properties.notify) continue;
-        final isKnownChar = isKnownSvc &&
-            char.characteristicUuid == _dFlyButtonCharUuid;
+        final isKnownChar = isKnownSvc && (
+            char.characteristicUuid == _dFlyButtonCharUuid ||
+            char.characteristicUuid == _shimanoDataCharUuid);
         Log.i('BLE', '    char ${char.characteristicUuid}  notify=true${isKnownChar ? " ← button char ✓" : ""}');
         await char.setNotifyValue(true);
 
