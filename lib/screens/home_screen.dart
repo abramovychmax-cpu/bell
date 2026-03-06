@@ -106,8 +106,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   Expanded(
                     child: _ButtonToggleCard(
-                      label: 'Climb A',
-                      sublabel: 'Bar top · left',
+                      label: 'Left A',
+                      sublabel: 'D-FLY Ch.1',
                       enabled: _climbAEnabled,
                       onToggle: (v) async {
                         await widget.storage.saveClimbAEnabled(v);
@@ -118,8 +118,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: _ButtonToggleCard(
-                      label: 'Climb B',
-                      sublabel: 'Bar top · right',
+                      label: 'Right A',
+                      sublabel: 'D-FLY Ch.4',
                       enabled: _climbBEnabled,
                       onToggle: (v) async {
                         await widget.storage.saveClimbBEnabled(v);

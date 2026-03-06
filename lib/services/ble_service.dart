@@ -156,7 +156,9 @@ class BleService extends ChangeNotifier {
             climbB: _storage.climbBEnabled,
           );
           Log.i('BLE',
-            'packet → isButtonDown=${Di2Parser.isButtonDown(data)}  '
+            'packet → comp=0x${data.length > 3 ? data[3].toRadixString(16).padLeft(2,"0") : "?"}  '
+            'byte4=0x${data.length > 4 ? data[4].toRadixString(16).padLeft(2,"0") : "?"}  '
+            'isButtonDown=${Di2Parser.isButtonDown(data)}  '
             'enabledActive=$active  '
             'climbAen=${_storage.climbAEnabled}  climbBen=${_storage.climbBEnabled}');
           if (active) {
