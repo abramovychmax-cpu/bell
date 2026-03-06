@@ -99,11 +99,10 @@ class BleService extends ChangeNotifier {
   /// and 12-speed proprietary (RD-R8150 / RD-R9250).
   Stream<ScanResult> scan({int timeoutSec = 15}) {
     _setStatus(BleStatus.scanning);
-    Log.i('BLE', 'Starting scan filtered by Shimano service UUIDs');
+    Log.i('BLE', 'Starting scan — no filter, showing all BLE devices');
     FlutterBluePlus.startScan(
       timeout: Duration(seconds: timeoutSec),
       androidScanMode: AndroidScanMode.lowPower,
-      withServices: _scanServiceUuids,
     );
     return FlutterBluePlus.scanResults.expand((list) => list);
   }
