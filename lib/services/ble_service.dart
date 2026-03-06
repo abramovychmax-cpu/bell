@@ -56,12 +56,18 @@ class BleService extends ChangeNotifier {
   }
 
   /// Returns a stream of scan results for the pairing screen.
-  /// Uses low-power scan mode to minimise battery draw.
-  Stream<ScanResult> scan({int timeoutSec = 12}) {
+  /// Filters by Shimano D-Fly service UUID so only the wireless unit
+  /// (EW-WU111 / SM-EWW01) appears — even when it has no visible name on iOS.
+  Stream<ScanResult> scan({int timeoutSec = 15}) {
     _setStatus(BleStatus.scanning);
+    Log.i('BLE', 'Starting scan filtered by D-Fly service UUID');
     FlutterBluePlus.startScan(
       timeout: Duration(seconds: timeoutSec),
       androidScanMode: AndroidScanMode.lowPower,
+      // Only return devices that advertise the Shimano D-Fly BLE service.
+      // This filters out every non-Shimano device (phones, TVs, trainers…)
+      // and also solves the iOS "Unknown device" problem.
+      withServices: [_dFlyServiceUuid],
     );
     return FlutterBluePlus.scanResults.expand((list) => list);
   }
