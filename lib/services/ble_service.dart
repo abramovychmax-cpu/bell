@@ -157,9 +157,12 @@ class BleService extends ChangeNotifier {
 
     // Balanced priority: ~100 ms BLE connection interval saves battery vs
     // "high" (7.5 ms) while still being fast enough for button detection.
-    await device.requestConnectionPriority(
-      connectionPriorityRequest: ConnectionPriority.balanced,
-    );
+    // Android only — iOS does not expose this API.
+    if (Platform.isAndroid) {
+      await device.requestConnectionPriority(
+        connectionPriorityRequest: ConnectionPriority.balanced,
+      );
+    }
 
     _connStateSub?.cancel();
     _connStateSub = device.connectionState.listen((state) {
