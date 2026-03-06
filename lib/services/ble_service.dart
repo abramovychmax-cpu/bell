@@ -47,22 +47,35 @@ class BleService extends ChangeNotifier {
   // Legacy D-Fly (EW-WU111, SM-EWW01, older junction boxes)
   static final Guid _dFlyServiceUuid =
       Guid('a026ee01-0a7d-4ab3-97fa-f1500f9feb8b');
+  // ignore: unused_field
   static final Guid _dFlyButtonCharUuid =
       Guid('a026e002-0a7d-4ab3-97fa-f1500f9feb8b');
 
-  // Shimano proprietary (RD-R8150, RD-R9250 and 12-speed Di2 in general)
+  // Shimano 12-speed Di2 (RD-R8150 / RD-R9250) — confirmed from live device log.
+  // Service UUID suffix 5348494d414e4f5f424c4500 = ASCII "SHIMANO_BLE\0".
+  //
+  // 18ef — D-Fly channel status service (button event indications)
+  // 18ff — alternative / gear data service
+  // 18fe — write-only service (not needed — no auth required)
   static final Guid _shimanoServiceUuid =
-      Guid('ad0a1000-6101-414a-a001-0010c2e6f477');
-  /// Gear/CSC data — subscribed for keep-alive; not parsed for button events.
-  static final Guid _shimanoDataCharUuid =
-      Guid('ad0a1001-6101-414a-a001-0010c2e6f477');
-  /// Switch events: [switchId, actionCode] — the button characteristic we act on.
-  static final Guid _shimanoSwitchCharUuid =
-      Guid('ad0a1002-6101-414a-a001-0010c2e6f477');
+      Guid('000018ef-5348-494d-414e-4f5f424c4500');
+  // ignore: unused_field
+  static final Guid _shimanoAltServiceUuid =
+      Guid('000018ff-5348-494d-414e-4f5f424c4500');
 
-  // Both service UUIDs kept here for reference / future re-enabling of scan filter.
+  /// D-Fly channel characteristic — sends INDICATIONS with per-channel press state.
+  /// Packet: [headerByte, ch1, ch2, ch3, ...]
+  ///   Bit 0x10 = short press, 0x20 = long press, 0x40 = double press, 0 = released.
+  /// Ch.1 = left A-button (climbA), Ch.4 = right A-button (climbB).
+  static final Guid _dFlyChannelCharUuid =
+      Guid('00002ac2-5348-494d-414e-4f5f424c4500');
+
+  // Scan service UUIDs for reference / future re-enabling of scan filter.
   // ignore: unused_element
   List<Guid> get _scanServiceUuids => [_dFlyServiceUuid, _shimanoServiceUuid];
+
+  // ── D-Fly channel state (stateful — needed to detect VALUE changes) ────────
+  List<int>? _lastDFlyChannels;
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
@@ -178,79 +191,117 @@ class BleService extends ChangeNotifier {
   Future<void> _subscribeAll(BluetoothDevice device) async {
     for (final s in _notifySubs) { s.cancel(); }
     _notifySubs.clear();
+    _lastDFlyChannels = null; // reset on each fresh connection
 
     final services = await device.discoverServices();
     Log.i('BLE', 'Discovered ${services.length} services');
-    for (final svc in services) {
-      final isKnownSvc = svc.serviceUuid == _dFlyServiceUuid ||
-          svc.serviceUuid == _shimanoServiceUuid;
-      Log.i('BLE', '  service ${svc.serviceUuid}${isKnownSvc ? " ← Shimano ✓" : ""}');
-      for (final char in svc.characteristics) {
-        if (!char.properties.notify) continue;
 
-        final isSwitchChar = char.characteristicUuid == _shimanoSwitchCharUuid;
-        final isLegacyChar = isKnownSvc &&
-            char.characteristicUuid == _dFlyButtonCharUuid;
-        final isGearChar = isKnownSvc &&
-            char.characteristicUuid == _shimanoDataCharUuid;
-        final label = isSwitchChar
-            ? ' ← switch char ✓'
-            : isLegacyChar
-                ? ' ← legacy D-Fly char ✓'
-                : isGearChar
-                    ? ' ← gear/CSC data char'
-                    : '';
-        Log.i('BLE', '    char ${char.characteristicUuid}  notify=true$label');
+    // First pass: log ALL characteristics so the debug log captures the
+    // full picture of services and properties for diagnostics.
+    for (final svc in services) {
+      final isShimanoSvc = svc.serviceUuid == _dFlyServiceUuid ||
+          svc.serviceUuid == _shimanoServiceUuid ||
+          svc.serviceUuid == _shimanoAltServiceUuid;
+      Log.i('BLE', '  service ${svc.serviceUuid}${isShimanoSvc ? " ← Shimano ✓" : ""}');
+      for (final char in svc.characteristics) {
+        final p = char.properties;
+        final flags = [
+          if (p.read)         'R',
+          if (p.write)        'W',
+          if (p.writeWithoutResponse) 'WnR',
+          if (p.notify)       'N',
+          if (p.indicate)     'I',
+        ].join('|');
+        Log.i('BLE', '    char ${char.characteristicUuid}  [$flags]');
+      }
+    }
+
+    // Second pass: subscribe to all notify AND indicate characteristics.
+    // Di2 D-Fly channel char (2ac2) uses INDICATIONS — must include indicate here.
+    for (final svc in services) {
+      for (final char in svc.characteristics) {
+        if (!char.properties.notify && !char.properties.indicate) continue;
         await char.setNotifyValue(true);
+
+        final isDFlyChannelChar = char.characteristicUuid == _dFlyChannelCharUuid;
+        // Legacy D-Fly button char (EW-WU111)
+        final isLegacyDFlyChar = char.characteristicUuid == _dFlyButtonCharUuid;
 
         final sub = char.lastValueStream.listen((data) {
           if (data.isEmpty) return;
-          // Log every raw packet — invaluable for firmware reverse-engineering
-          Log.raw('BLE', 'notify ${char.characteristicUuid}', data);
+          Log.raw('BLE', 'notify/indicate ${char.characteristicUuid}', data);
 
-          if (isSwitchChar) {
-            // ── New 1002 path: hardware-classified switch events ──────────
-            final event = Di2Parser.parseSwitchEvent(data);
-            Log.i('BLE',
-              'switch event → ${event ?? "too short (len=${data.length})"}'  
-              '  climbAen=${_storage.climbAEnabled}  climbBen=${_storage.climbBEnabled}');
-            if (event != null && event.action == Di2Action.longPress) {
-              final enabled =
-                  (event.button == Di2Button.climbA && _storage.climbAEnabled) ||
-                  (event.button == Di2Button.climbB && _storage.climbBEnabled);
-              if (enabled) {
-                Log.i('BLE', 'Long press on enabled button → triggering hold callback');
-                onHoldDetected();
+          if (isDFlyChannelChar) {
+            // ── 2ac2 D-Fly channel char (RD-R8150 / 12-speed Di2) ─────────
+            // Packet: [headerByte, ch1, ch2, ch3, ...]
+            // Bit 0x10 = short press, 0x20 = long press, 0x40 = double press.
+            // Ch.1 (index 0) = left A-button (climbA), Ch.4 (index 3) = right.
+            if (data.length < 2) return;
+            final channels = data.sublist(1);
+
+            if (_lastDFlyChannels == null) {
+              // First packet: initialize state without triggering any buttons.
+              _lastDFlyChannels = List.from(channels);
+              Log.i('BLE', 'D-Fly init state: ${channels.map((b) => b.toRadixString(16).padLeft(2, "0")).join(" ")}');
+              return;
+            }
+
+            for (int i = 0; i < channels.length; i++) {
+              final prev = i < _lastDFlyChannels!.length ? _lastDFlyChannels![i] : channels[i];
+              final curr = channels[i];
+              if (curr == prev) continue;
+
+              final chNum = i + 1; // 1-indexed D-Fly channel number
+              final pressType = (curr & 0x20) != 0 ? 'LONG'
+                              : (curr & 0x10) != 0 ? 'short'
+                              : (curr & 0x40) != 0 ? 'double'
+                              : 'released';
+              Log.i('BLE', 'D-Fly Ch.$chNum $pressType (0x${curr.toRadixString(16).padLeft(2, "0")})');
+
+              if ((curr & 0x20) != 0) {
+                // Long press — check if this channel maps to an enabled button.
+                final enabled =
+                    (chNum == 1 && _storage.climbAEnabled) || // Ch.1 = left A
+                    (chNum == 4 && _storage.climbBEnabled);  // Ch.4 = right A
+                if (enabled) {
+                  Log.i('BLE', 'Enabled long press on D-Fly Ch.$chNum → triggering hold callback');
+                  onHoldDetected();
+                }
               }
             }
-          } else {
-            // ── Legacy D-Fly path: software HoldDetector ─────────────────
+            _lastDFlyChannels = List.from(channels);
+
+          } else if (isLegacyDFlyChar) {
+            // ── Legacy D-Fly path (EW-WU111 / older junction boxes) ────────
             final active = Di2Parser.isEnabledActive(
               data,
               climbA: _storage.climbAEnabled,
               climbB: _storage.climbBEnabled,
             );
             Log.i('BLE',
-              'legacy packet → '
+              'D-Fly legacy [${char.characteristicUuid}] '
               'comp=0x${data.length > 3 ? data[3].toRadixString(16).padLeft(2, "0") : "?"}  '
-              'byte4=0x${data.length > 4 ? data[4].toRadixString(16).padLeft(2, "0") : "?"}  '
               'isButtonDown=${Di2Parser.isButtonDown(data)}  '
               'enabledActive=$active');
             if (active) {
               Log.i('BLE', 'Enabled button active → feeding HoldDetector');
               _holdDetector?.onPacket();
             }
+          } else {
+            // ── Other / background char — log only ────────────────────────
+            Log.i('BLE', 'bg packet [${char.characteristicUuid}] ${data.length} bytes');
           }
         });
         _notifySubs.add(sub);
       }
     }
-    Log.i('BLE', 'Listening on ${_notifySubs.length} notify characteristics');
+    Log.i('BLE', 'Listening on ${_notifySubs.length} notify/indicate characteristics');
   }
 
   void _handleDisconnect(String remoteId) {
     Log.w('BLE', 'Disconnected from $remoteId');
     connectedDevice = null;
+    _lastDFlyChannels = null; // reset D-Fly state so next connect re-initializes
     _setStatus(BleStatus.disconnected);
     for (final s in _notifySubs) { s.cancel(); }
     _notifySubs.clear();
