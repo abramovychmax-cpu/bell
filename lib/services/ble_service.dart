@@ -279,8 +279,9 @@ class BleService extends ChangeNotifier {
                 } else {
                   Log.i('BLE', 'D-Fly Ch.$chNum hold repeat suppressed');
                 }
-              } else if (curr == 0x00) {
-                // Released — allow next hold to fire again.
+              } else {
+                // Long-press bit cleared (released / short / double) —
+                // clear the gate so the next hold gesture can fire again.
                 _holdFiredChannels.remove(chNum);
               }
             }
