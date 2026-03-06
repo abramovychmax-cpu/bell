@@ -76,6 +76,10 @@ class BleService extends ChangeNotifier {
 
   // ── D-Fly channel state (stateful — needed to detect VALUE changes) ────────
   List<int>? _lastDFlyChannels;
+  // Channels that have already fired onHoldDetected for the current hold
+  // gesture. Cleared when the channel byte returns to 0 (released).
+  // Prevents repeated Di2 indications from re-triggering the call every 240 ms.
+  final Set<int> _holdFiredChannels = {};
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
@@ -192,6 +196,7 @@ class BleService extends ChangeNotifier {
     for (final s in _notifySubs) { s.cancel(); }
     _notifySubs.clear();
     _lastDFlyChannels = null; // reset on each fresh connection
+    _holdFiredChannels.clear();
 
     final services = await device.discoverServices();
     Log.i('BLE', 'Discovered ${services.length} services');
@@ -259,14 +264,24 @@ class BleService extends ChangeNotifier {
               Log.i('BLE', 'D-Fly Ch.$chNum $pressType (0x${curr.toRadixString(16).padLeft(2, "0")})');
 
               if ((curr & 0x20) != 0) {
-                // Long press — check if this channel maps to an enabled button.
-                final enabled =
-                    (chNum == 1 && _storage.climbAEnabled) || // Ch.1 = left A
-                    (chNum == 4 && _storage.climbBEnabled);  // Ch.4 = right A
-                if (enabled) {
-                  Log.i('BLE', 'Enabled long press on D-Fly Ch.$chNum → triggering hold callback');
-                  onHoldDetected();
+                // Long press — fire ONCE per hold gesture (suppress repeats).
+                if (!_holdFiredChannels.contains(chNum)) {
+                  _holdFiredChannels.add(chNum);
+                  final enabled =
+                      (chNum == 1 && _storage.climbAEnabled) || // Ch.1 = left A
+                      (chNum == 4 && _storage.climbBEnabled);  // Ch.4 = right A
+                  if (enabled) {
+                    Log.i('BLE', 'Enabled long press on D-Fly Ch.$chNum → triggering hold callback');
+                    onHoldDetected();
+                  } else {
+                    Log.i('BLE', 'Long press on D-Fly Ch.$chNum — button not enabled, ignoring');
+                  }
+                } else {
+                  Log.i('BLE', 'D-Fly Ch.$chNum hold repeat suppressed');
                 }
+              } else if (curr == 0x00) {
+                // Released — allow next hold to fire again.
+                _holdFiredChannels.remove(chNum);
               }
             }
             _lastDFlyChannels = List.from(channels);
@@ -302,6 +317,7 @@ class BleService extends ChangeNotifier {
     Log.w('BLE', 'Disconnected from $remoteId');
     connectedDevice = null;
     _lastDFlyChannels = null; // reset D-Fly state so next connect re-initializes
+    _holdFiredChannels.clear();
     _setStatus(BleStatus.disconnected);
     for (final s in _notifySubs) { s.cancel(); }
     _notifySubs.clear();
