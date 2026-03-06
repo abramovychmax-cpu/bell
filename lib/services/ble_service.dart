@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
 import '../models/di2_device.dart';
@@ -33,6 +35,9 @@ class BleService extends ChangeNotifier {
   HoldDetector? _holdDetector;
   StreamSubscription<BluetoothConnectionState>? _connStateSub;
   final List<StreamSubscription<List<int>>> _notifySubs = [];
+  StreamSubscription<dynamic>? _wahooEventSub;
+
+  static const _wahooEventChannel = EventChannel('com.bell/wahoo_events');
 
   bool _disposed = false;
   int _reconnectDelayMs = 2000;
@@ -65,6 +70,28 @@ class BleService extends ChangeNotifier {
     final paired = _storage.pairedDevice;
     Log.i('BLE', 'start() — paired device: ${paired?.name ?? "none"}  climbA=${_storage.climbAEnabled}  climbB=${_storage.climbBEnabled}  holdMs=${_storage.holdDurationMs}');
     if (paired != null) await _connectById(paired.remoteId);
+    _listenWahooEvents();
+  }
+
+  /// On Android: subscribe to Wahoo BT connect/disconnect events from
+  /// MainActivity so we can auto-start the Di2 connection when the rider
+  /// mounts their bike and the Wahoo head-unit pairs.
+  void _listenWahooEvents() {
+    if (!Platform.isAndroid) return;
+    _wahooEventSub?.cancel();
+    _wahooEventSub = _wahooEventChannel.receiveBroadcastStream().listen(
+      (event) {
+        Log.i('BLE', 'Wahoo event: $event');
+        if (event == 'wahoo_connected') {
+          final paired = _storage.pairedDevice;
+          if (paired != null && status != BleStatus.connected && status != BleStatus.connecting) {
+            Log.i('BLE', 'Wahoo connected → auto-connecting Di2');
+            _connectById(paired.remoteId);
+          }
+        }
+      },
+      onError: (e) => Log.w('BLE', 'Wahoo event channel error: $e'),
+    );
   }
 
   /// Returns a stream of scan results for the pairing screen.
@@ -265,6 +292,7 @@ class BleService extends ChangeNotifier {
     _disposed = true;
     _holdDetector?.dispose();
     _connStateSub?.cancel();
+    _wahooEventSub?.cancel();
     for (final s in _notifySubs) { s.cancel(); }
     super.dispose();
   }
