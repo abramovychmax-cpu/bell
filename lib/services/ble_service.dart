@@ -48,8 +48,12 @@ class BleService extends ChangeNotifier {
   // Shimano proprietary (RD-R8150, RD-R9250 and 12-speed Di2 in general)
   static final Guid _shimanoServiceUuid =
       Guid('ad0a1000-6101-414a-a001-0010c2e6f477');
+  /// Gear/CSC data — subscribed for keep-alive; not parsed for button events.
   static final Guid _shimanoDataCharUuid =
       Guid('ad0a1001-6101-414a-a001-0010c2e6f477');
+  /// Switch events: [switchId, actionCode] — the button characteristic we act on.
+  static final Guid _shimanoSwitchCharUuid =
+      Guid('ad0a1002-6101-414a-a001-0010c2e6f477');
 
   // Both service UUIDs used for scan filtering so we catch any Di2 generation.
   List<Guid> get _scanServiceUuids => [_dFlyServiceUuid, _shimanoServiceUuid];
@@ -153,30 +157,59 @@ class BleService extends ChangeNotifier {
       Log.i('BLE', '  service ${svc.serviceUuid}${isKnownSvc ? " ← Shimano ✓" : ""}');
       for (final char in svc.characteristics) {
         if (!char.properties.notify) continue;
-        final isKnownChar = isKnownSvc && (
-            char.characteristicUuid == _dFlyButtonCharUuid ||
-            char.characteristicUuid == _shimanoDataCharUuid);
-        Log.i('BLE', '    char ${char.characteristicUuid}  notify=true${isKnownChar ? " ← button char ✓" : ""}');
+
+        final isSwitchChar = char.characteristicUuid == _shimanoSwitchCharUuid;
+        final isLegacyChar = isKnownSvc &&
+            char.characteristicUuid == _dFlyButtonCharUuid;
+        final isGearChar = isKnownSvc &&
+            char.characteristicUuid == _shimanoDataCharUuid;
+        final label = isSwitchChar
+            ? ' ← switch char ✓'
+            : isLegacyChar
+                ? ' ← legacy D-Fly char ✓'
+                : isGearChar
+                    ? ' ← gear/CSC data char'
+                    : '';
+        Log.i('BLE', '    char ${char.characteristicUuid}  notify=true$label');
         await char.setNotifyValue(true);
 
         final sub = char.lastValueStream.listen((data) {
           if (data.isEmpty) return;
-          // Log every raw packet so we can reverse-engineer new firmware
+          // Log every raw packet — invaluable for firmware reverse-engineering
           Log.raw('BLE', 'notify ${char.characteristicUuid}', data);
-          final active = Di2Parser.isEnabledActive(
-            data,
-            climbA: _storage.climbAEnabled,
-            climbB: _storage.climbBEnabled,
-          );
-          Log.i('BLE',
-            'packet → comp=0x${data.length > 3 ? data[3].toRadixString(16).padLeft(2,"0") : "?"}  '
-            'byte4=0x${data.length > 4 ? data[4].toRadixString(16).padLeft(2,"0") : "?"}  '
-            'isButtonDown=${Di2Parser.isButtonDown(data)}  '
-            'enabledActive=$active  '
-            'climbAen=${_storage.climbAEnabled}  climbBen=${_storage.climbBEnabled}');
-          if (active) {
-            Log.i('BLE', 'Enabled button active → feeding HoldDetector');
-            _holdDetector?.onPacket();
+
+          if (isSwitchChar) {
+            // ── New 1002 path: hardware-classified switch events ──────────
+            final event = Di2Parser.parseSwitchEvent(data);
+            Log.i('BLE',
+              'switch event → ${event ?? "too short (len=${data.length})"}'  
+              '  climbAen=${_storage.climbAEnabled}  climbBen=${_storage.climbBEnabled}');
+            if (event != null && event.action == Di2Action.longPress) {
+              final enabled =
+                  (event.button == Di2Button.climbA && _storage.climbAEnabled) ||
+                  (event.button == Di2Button.climbB && _storage.climbBEnabled);
+              if (enabled) {
+                Log.i('BLE', 'Long press on enabled button → triggering hold callback');
+                onHoldDetected();
+              }
+            }
+          } else {
+            // ── Legacy D-Fly path: software HoldDetector ─────────────────
+            final active = Di2Parser.isEnabledActive(
+              data,
+              climbA: _storage.climbAEnabled,
+              climbB: _storage.climbBEnabled,
+            );
+            Log.i('BLE',
+              'legacy packet → '
+              'comp=0x${data.length > 3 ? data[3].toRadixString(16).padLeft(2, "0") : "?"}  '
+              'byte4=0x${data.length > 4 ? data[4].toRadixString(16).padLeft(2, "0") : "?"}  '
+              'isButtonDown=${Di2Parser.isButtonDown(data)}  '
+              'enabledActive=$active');
+            if (active) {
+              Log.i('BLE', 'Enabled button active → feeding HoldDetector');
+              _holdDetector?.onPacket();
+            }
           }
         });
         _notifySubs.add(sub);
