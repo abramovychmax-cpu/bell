@@ -2,14 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 import 'services/ble_service.dart';
+import 'services/call_service.dart';
 import 'services/storage_service.dart';
 import 'screens/home_screen.dart';
 
 class BellApp extends StatelessWidget {
   final BleService ble;
   final StorageService storage;
+  final CallService call;
 
-  const BellApp({super.key, required this.ble, required this.storage});
+  const BellApp({super.key, required this.ble, required this.storage, required this.call});
 
   @override
   Widget build(BuildContext context) {
@@ -24,7 +26,7 @@ class BellApp extends StatelessWidget {
             brightness: Brightness.dark,
           ),
         ),
-        home: HomeScreen(ble: ble, storage: storage),
+        home: HomeScreen(ble: ble, storage: storage, call: call),
       ),
     );
   }

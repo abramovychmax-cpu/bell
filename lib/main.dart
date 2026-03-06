@@ -29,7 +29,7 @@ void main() async {
   // Android: start foreground service so BLE connection survives screen-off.
   _initForegroundTask();
 
-  runApp(BellApp(ble: bleService, storage: storage));
+  runApp(BellApp(ble: bleService, storage: storage, call: callService));
 
   // Start BLE after the widget tree is ready.
   await bleService.start();

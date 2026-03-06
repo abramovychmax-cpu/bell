@@ -4,6 +4,7 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../services/ble_service.dart';
+import '../services/call_service.dart';
 import '../services/log_service.dart';
 import '../services/storage_service.dart';
 import '../services/wahoo_service.dart';
@@ -11,7 +12,8 @@ import '../services/wahoo_service.dart';
 class HomeScreen extends StatefulWidget {
   final BleService ble;
   final StorageService storage;
-  const HomeScreen({super.key, required this.ble, required this.storage});
+  final CallService call;
+  const HomeScreen({super.key, required this.ble, required this.storage, required this.call});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -158,7 +160,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
               const SizedBox(height: 20),
 
-              // ── 6. Debug log share ─────────────────────────────────────
+              // ── 6. Test Wahoo alert ────────────────────────────────────
+              _TestCallButton(call: widget.call, storage: widget.storage),
+
+              const SizedBox(height: 8),
+
+              // ── 7. Debug log share ────────────────────────────────────
               OutlinedButton.icon(
                 icon: const Icon(Icons.bug_report_outlined, size: 16),
                 label: const Text('Share Debug Log'),
@@ -816,6 +823,56 @@ class _ScanSheetState extends State<_ScanSheet> {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test call button — triggers a fake incoming call to verify Wahoo display
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _TestCallButton extends StatefulWidget {
+  final CallService call;
+  final StorageService storage;
+  const _TestCallButton({required this.call, required this.storage});
+
+  @override
+  State<_TestCallButton> createState() => _TestCallButtonState();
+}
+
+class _TestCallButtonState extends State<_TestCallButton> {
+  bool _busy = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton.icon(
+      icon: _busy
+          ? const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+            )
+          : const Icon(Icons.phone_in_talk_outlined),
+      label: Text(_busy ? 'Ringing…' : 'Test Wahoo Alert'),
+      style: FilledButton.styleFrom(
+        backgroundColor: const Color(0xFFE53935),
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+      ),
+      onPressed: _busy
+          ? null
+          : () async {
+              setState(() => _busy = true);
+              try {
+                await widget.call.triggerCall(
+                  callerName: widget.storage.callMessage,
+                  durationSec: 6,
+                );
+              } finally {
+                if (mounted) setState(() => _busy = false);
+              }
+            },
     );
   }
 }
