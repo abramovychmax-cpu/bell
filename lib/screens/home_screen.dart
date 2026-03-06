@@ -725,7 +725,7 @@ class _ScanSheetState extends State<_ScanSheet> {
                               .textTheme
                               .titleMedium
                               ?.copyWith(fontWeight: FontWeight.bold)),
-                      Text('Wake RD-R8150 by pressing the brake lever first',
+                      Text('Press brake lever to wake the RD-R8150, then tap it here',
                           style: Theme.of(context)
                               .textTheme
                               .bodySmall
@@ -769,27 +769,35 @@ class _ScanSheetState extends State<_ScanSheet> {
                       final r = sorted[i];
                       final name = r.device.platformName.isNotEmpty
                           ? r.device.platformName
-                          : 'Shimano DI2';
-                      // All results are already Shimano (filtered by service UUID).
+                          : 'Unknown device';
+                      final isShimano =
+                          name.toLowerCase().contains('shimano') ||
+                          name.toLowerCase().contains('ew-wu') ||
+                          name.toLowerCase().contains('di2') ||
+                          name.toLowerCase().contains('d-fly') ||
+                          name.toLowerCase().contains('rd-r') ||
+                          name.toLowerCase().contains('eww');
                       return ListTile(
-                        leading: const Icon(Icons.bluetooth,
-                            color: Colors.greenAccent),
+                        leading: Icon(Icons.bluetooth,
+                            color: isShimano ? Colors.greenAccent : Colors.grey),
                         title: Row(
                           children: [
-                            Text(name),
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: Colors.greenAccent.withAlpha(40),
-                                borderRadius: BorderRadius.circular(4),
+                            Flexible(child: Text(name)),
+                            if (isShimano) ...[
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.greenAccent.withAlpha(40),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: const Text('SHIMANO',
+                                    style: TextStyle(
+                                        fontSize: 10,
+                                        color: Colors.greenAccent)),
                               ),
-                              child: const Text('SHIMANO',
-                                  style: TextStyle(
-                                      fontSize: 10,
-                                      color: Colors.greenAccent)),
-                            ),
+                            ],
                           ],
                         ),
                         subtitle: Text(r.device.remoteId.str,
