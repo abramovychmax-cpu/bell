@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'log_service.dart';
 
 /// Distinguishes a short click from a deliberate hold on the DI2 button.
 ///
@@ -27,8 +28,10 @@ class HoldDetector {
 
   /// Call this every time a button-down BLE notification arrives.
   void onPacket() {
+    final isFirstPacket = _pressStart == null;
     _pressStart ??= DateTime.now();
     _triggered = false;
+    if (isFirstPacket) Log.i('Hold', 'Button press started — hold threshold=${holdThresholdMs}ms');
 
     // Reset the "silence → button released" timer.
     _releaseTimer?.cancel();
@@ -42,8 +45,12 @@ class HoldDetector {
     final held = DateTime.now().difference(start).inMilliseconds;
     _pressStart = null;
 
+    Log.i('Hold', 'Button released — held=${held}ms  threshold=${holdThresholdMs}ms  '
+        'willFire=${!_triggered && held >= holdThresholdMs}');
+
     if (!_triggered && held >= holdThresholdMs) {
       _triggered = true;
+      Log.i('Hold', '🔔 Hold threshold met — firing callback');
       onHold();
     }
   }

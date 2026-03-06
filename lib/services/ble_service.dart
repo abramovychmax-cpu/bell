@@ -5,6 +5,7 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import '../models/di2_device.dart';
 import 'di2_parser.dart';
 import 'hold_detector.dart';
+import 'log_service.dart';
 import 'storage_service.dart';
 
 enum BleStatus { off, idle, scanning, connecting, connected, disconnected }
@@ -50,6 +51,7 @@ class BleService extends ChangeNotifier {
   Future<void> start() async {
     _rebuildHoldDetector();
     final paired = _storage.pairedDevice;
+    Log.i('BLE', 'start() — paired device: ${paired?.name ?? "none"}  climbA=${_storage.climbAEnabled}  climbB=${_storage.climbBEnabled}  holdMs=${_storage.holdDurationMs}');
     if (paired != null) await _connectById(paired.remoteId);
   }
 
@@ -93,12 +95,13 @@ class BleService extends ChangeNotifier {
 
   Future<void> _connectById(String remoteId) async {
     if (_disposed) return;
+    Log.i('BLE', 'Connecting to $remoteId …');
     _setStatus(BleStatus.connecting);
     try {
       final device = BluetoothDevice.fromId(remoteId);
       await _attach(device);
     } catch (e) {
-      debugPrint('[BLE] connect error: $e');
+      Log.e('BLE', 'connect error: $e');
       _scheduleReconnect(remoteId);
     }
   }
@@ -108,6 +111,7 @@ class BleService extends ChangeNotifier {
 
     connectedDevice = device;
     _reconnectDelayMs = 2000; // reset back-off on success
+    Log.i('BLE', 'Connected to ${device.platformName} (${device.remoteId})');
     _setStatus(BleStatus.connected);
 
     // Balanced priority: ~100 ms BLE connection interval saves battery vs
@@ -131,32 +135,43 @@ class BleService extends ChangeNotifier {
     _notifySubs.clear();
 
     final services = await device.discoverServices();
+    Log.i('BLE', 'Discovered ${services.length} services');
     for (final svc in services) {
+      final isKnownSvc = svc.serviceUuid == _dFlyServiceUuid;
+      Log.i('BLE', '  service ${svc.serviceUuid}${isKnownSvc ? " ← D-Fly ✓" : ""}');
       for (final char in svc.characteristics) {
         if (!char.properties.notify) continue;
-        await char.setNotifyValue(true);
-
-        final isKnownChar = svc.serviceUuid == _dFlyServiceUuid &&
+        final isKnownChar = isKnownSvc &&
             char.characteristicUuid == _dFlyButtonCharUuid;
+        Log.i('BLE', '    char ${char.characteristicUuid}  notify=true${isKnownChar ? " ← button char ✓" : ""}');
+        await char.setNotifyValue(true);
 
         final sub = char.lastValueStream.listen((data) {
           if (data.isEmpty) return;
-          if (isKnownChar || Di2Parser.isEnabledActive(
+          // Log every raw packet so we can reverse-engineer new firmware
+          Log.raw('BLE', 'notify ${char.characteristicUuid}', data);
+          final active = Di2Parser.isEnabledActive(
             data,
             climbA: _storage.climbAEnabled,
             climbB: _storage.climbBEnabled,
-          )) {
+          );
+          Log.i('BLE',
+            'packet → isButtonDown=${Di2Parser.isButtonDown(data)}  '
+            'enabledActive=$active  '
+            'climbAen=${_storage.climbAEnabled}  climbBen=${_storage.climbBEnabled}');
+          if (active) {
+            Log.i('BLE', 'Enabled button active → feeding HoldDetector');
             _holdDetector?.onPacket();
           }
         });
         _notifySubs.add(sub);
       }
     }
-    debugPrint('[BLE] Listening on ${_notifySubs.length} notify characteristics');
+    Log.i('BLE', 'Listening on ${_notifySubs.length} notify characteristics');
   }
 
   void _handleDisconnect(String remoteId) {
-    debugPrint('[BLE] Disconnected');
+    Log.w('BLE', 'Disconnected from $remoteId');
     connectedDevice = null;
     _setStatus(BleStatus.disconnected);
     for (final s in _notifySubs) { s.cancel(); }
@@ -166,7 +181,7 @@ class BleService extends ChangeNotifier {
 
   void _scheduleReconnect(String remoteId) {
     if (_disposed) return;
-    debugPrint('[BLE] Retry in ${_reconnectDelayMs}ms …');
+    Log.i('BLE', 'Retry in ${_reconnectDelayMs}ms …');
     Future.delayed(Duration(milliseconds: _reconnectDelayMs), () {
       if (!_disposed) _connectById(remoteId);
     });

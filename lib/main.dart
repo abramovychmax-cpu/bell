@@ -4,10 +4,13 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'services/storage_service.dart';
 import 'services/call_service.dart';
 import 'services/ble_service.dart';
+import 'services/log_service.dart';
 import 'app.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  await Log.init();
 
   final storage = StorageService();
   await storage.init();
@@ -17,9 +20,10 @@ void main() async {
 
   final bleService = BleService(
     storage: storage,
-    onHoldDetected: () => callService.triggerCall(
-      callerName: storage.callMessage,
-    ),
+    onHoldDetected: () {
+      Log.i('Main', 'Hold detected → triggering call: "${storage.callMessage}"');
+      callService.triggerCall(callerName: storage.callMessage);
+    },
   );
 
   // Android: start foreground service so BLE connection survives screen-off.

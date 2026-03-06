@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../services/ble_service.dart';
+import '../services/log_service.dart';
 import '../services/storage_service.dart';
 import '../services/wahoo_service.dart';
 
@@ -152,6 +154,33 @@ class _HomeScreenState extends State<HomeScreen> {
                   await _checkWahoo();
                 },
                 onRefresh: _checkWahoo,
+              ),
+
+              const SizedBox(height: 20),
+
+              // ── 6. Debug log share ─────────────────────────────────────
+              OutlinedButton.icon(
+                icon: const Icon(Icons.bug_report_outlined, size: 16),
+                label: const Text('Share Debug Log'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Theme.of(context).colorScheme.onSurface.withAlpha(160),
+                  side: BorderSide(
+                    color: Theme.of(context).colorScheme.onSurface.withAlpha(60),
+                  ),
+                ),
+                onPressed: () async {
+                  final path = Log.filePath;
+                  if (path == null) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Log file not ready')),
+                    );
+                    return;
+                  }
+                  await Share.shareXFiles(
+                    [XFile(path)],
+                    text: 'Bell debug log',
+                  );
+                },
               ),
             ],
           ),

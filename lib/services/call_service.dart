@@ -4,6 +4,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'package:flutter_callkit_incoming/entities/entities.dart';
 import 'package:uuid/uuid.dart';
+import 'log_service.dart';
 
 /// Fires a fake incoming-call notification that the Wahoo ELEMNT mirrors.
 ///
@@ -44,6 +45,7 @@ class CallService {
   }) async {
     if (!_initialized) await init();
 
+    Log.i('Call', 'triggerCall "$callerName"  platform=${Platform.isIOS ? "iOS" : "Android"}');
     if (Platform.isIOS) {
       await _showIosCall(callerName);
     } else {
@@ -57,6 +59,7 @@ class CallService {
   // ── iOS: flutter_callkit_incoming ──────────────────────────────────────────
   Future<void> _showIosCall(String callerName) async {
     _activeCallId = _uuid.v4();
+    Log.i('Call', 'iOS CallKit → showCallkitIncoming id=$_activeCallId name="$callerName"');
     final params = CallKitParams(
       id: _activeCallId,
       nameCaller: callerName,
@@ -97,15 +100,17 @@ class CallService {
     try {
       await _channel.invokeMethod<void>('showCall', {'callerName': callerName});
       nativeOk = true;
+      Log.i('Call', 'Android MethodChannel showCall OK');
     } on PlatformException catch (e) {
       nativeOk = false;
-      // ignore: avoid_print
-      print('[Call] native channel error: $e');
-    } on MissingPluginException {
+      Log.e('Call', 'MethodChannel PlatformException: $e');
+    } on MissingPluginException catch (e) {
       nativeOk = false;
+      Log.e('Call', 'MissingPluginException: $e');
     }
 
     if (!nativeOk) {
+      Log.w('Call', 'Falling back to local notification');
       await _showFallbackNotification(callerName);
     }
   }
