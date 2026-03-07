@@ -77,9 +77,11 @@ class BleService extends ChangeNotifier {
   // ── D-Fly channel state (stateful — needed to detect VALUE changes) ────────
   List<int>? _lastDFlyChannels;
   // Channels that have already fired onHoldDetected for the current hold
-  // gesture. Cleared when the channel byte returns to 0 (released).
+  // gesture. Cleared when the channel byte returns to non-long-press state.
   // Prevents repeated Di2 indications from re-triggering the call every 240 ms.
   final Set<int> _holdFiredChannels = {};
+  // Periodic timer that rings onHoldDetected once per second while held.
+  Timer? _holdTimer;
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
@@ -197,6 +199,8 @@ class BleService extends ChangeNotifier {
     _notifySubs.clear();
     _lastDFlyChannels = null; // reset on each fresh connection
     _holdFiredChannels.clear();
+    _holdTimer?.cancel();
+    _holdTimer = null;
 
     final services = await device.discoverServices();
     Log.i('BLE', 'Discovered ${services.length} services');
@@ -264,24 +268,34 @@ class BleService extends ChangeNotifier {
               Log.i('BLE', 'D-Fly Ch.$chNum $pressType (0x${curr.toRadixString(16).padLeft(2, "0")})');
 
               if ((curr & 0x20) != 0) {
-                // Long press — fire ONCE per hold gesture (suppress repeats).
+                // Long press — start bell timer on first indication; suppress repeats.
                 if (!_holdFiredChannels.contains(chNum)) {
                   _holdFiredChannels.add(chNum);
                   final enabled =
                       (chNum == 1 && _storage.climbAEnabled) || // Ch.1 = left A
                       (chNum == 4 && _storage.climbBEnabled);  // Ch.4 = right A
                   if (enabled) {
-                    Log.i('BLE', 'Enabled long press on D-Fly Ch.$chNum → triggering hold callback');
-                    onHoldDetected();
+                    Log.i('BLE', 'Enabled long press on D-Fly Ch.$chNum → starting 1-second bell timer');
+                    _holdTimer?.cancel();
+                    onHoldDetected(); // ring immediately
+                    _holdTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+                      Log.i('BLE', 'Bell timer tick — D-Fly Ch.$chNum');
+                      onHoldDetected();
+                    });
                   } else {
                     Log.i('BLE', 'Long press on D-Fly Ch.$chNum — button not enabled, ignoring');
                   }
                 } else {
-                  Log.i('BLE', 'D-Fly Ch.$chNum hold repeat suppressed');
+                  Log.i('BLE', 'D-Fly Ch.$chNum hold repeat suppressed (timer running)');
                 }
               } else {
                 // Long-press bit cleared (released / short / double) —
-                // clear the gate so the next hold gesture can fire again.
+                // cancel bell timer and clear gate so next hold can fire again.
+                if (_holdFiredChannels.contains(chNum)) {
+                  _holdTimer?.cancel();
+                  _holdTimer = null;
+                  Log.i('BLE', 'D-Fly Ch.$chNum released → bell timer stopped');
+                }
                 _holdFiredChannels.remove(chNum);
               }
             }
@@ -319,6 +333,8 @@ class BleService extends ChangeNotifier {
     connectedDevice = null;
     _lastDFlyChannels = null; // reset D-Fly state so next connect re-initializes
     _holdFiredChannels.clear();
+    _holdTimer?.cancel();
+    _holdTimer = null;
     _setStatus(BleStatus.disconnected);
     for (final s in _notifySubs) { s.cancel(); }
     _notifySubs.clear();
@@ -362,6 +378,7 @@ class BleService extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _holdDetector?.dispose();
+    _holdTimer?.cancel();
     _connStateSub?.cancel();
     _wahooEventSub?.cancel();
     for (final s in _notifySubs) { s.cancel(); }

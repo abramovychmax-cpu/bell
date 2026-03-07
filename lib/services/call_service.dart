@@ -1,34 +1,29 @@
 import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
-import 'package:flutter_callkit_incoming/entities/entities.dart';
-import 'package:uuid/uuid.dart';
 import 'log_service.dart';
 
-/// Fires a fake incoming-call notification that the Wahoo ELEMNT mirrors.
+/// Fires a notification that the Wahoo ELEMNT mirrors via ANCS.
 ///
 /// The Wahoo companion app forwards all phone notifications over Bluetooth.
-/// A CallStyle / CallKit notification appears on the Wahoo head-unit as an
-/// incoming call; the configured rider message becomes the "caller name".
+/// Each call to [triggerCall] shows a time-sensitive banner on iOS (mirrors
+/// to Wahoo as a notification tile) and a CallStyle notification on Android.
 ///
 /// Android 12+ : native CallStyle notification via MethodChannel.
 /// Android <12 : full-screen high-priority notification fallback.
-/// iOS          : CallKit via flutter_callkit_incoming package.
+/// iOS          : time-sensitive local notification (flutter_local_notifications).
 class CallService {
   static const _channel = MethodChannel('com.bell/call');
-  static final _uuid = Uuid();
 
   final FlutterLocalNotificationsPlugin _notif =
       FlutterLocalNotificationsPlugin();
   bool _initialized = false;
-  String? _activeCallId;
 
   Future<void> init() async {
     const android = AndroidInitializationSettings('@mipmap/ic_launcher');
     const ios = DarwinInitializationSettings(
-      requestAlertPermission: false,
-      requestSoundPermission: false,
+      requestAlertPermission: true,
+      requestSoundPermission: true,
       requestBadgePermission: false,
     );
     await _notif.initialize(
@@ -41,13 +36,13 @@ class CallService {
   /// screen as the incoming-call name.  Auto-cancelled after [durationSec].
   Future<void> triggerCall({
     required String callerName,
-    int durationSec = 6,
+    int durationSec = 2,
   }) async {
     if (!_initialized) await init();
 
     Log.i('Call', 'triggerCall "$callerName"  platform=${Platform.isIOS ? "iOS" : "Android"}');
     if (Platform.isIOS) {
-      await _showIosCall(callerName);
+      await _showIosNotif(callerName);
     } else {
       await _showAndroidCall(callerName);
     }
@@ -56,42 +51,22 @@ class CallService {
     Future.delayed(Duration(seconds: durationSec), _dismiss);
   }
 
-  // ── iOS: flutter_callkit_incoming ──────────────────────────────────────────
-  Future<void> _showIosCall(String callerName) async {
-    _activeCallId = _uuid.v4();
-    Log.i('Call', 'iOS CallKit → showCallkitIncoming id=$_activeCallId name="$callerName"');
-    final params = CallKitParams(
-      id: _activeCallId,
-      nameCaller: callerName,
-      appName: 'Bell',
-      type: 1,
-      duration: 30000,
-      textAccept: 'Accept',
-      textDecline: 'Decline',
-      ios: const IOSParams(
-        iconName: 'AppIcon',
-        handleType: 'generic',
-        supportsHolding: false,
-        supportsDTMF: false,
-        supportsGrouping: false,
-        supportsUngrouping: false,
-        audioSessionMode: 'default',
-        audioSessionActive: true,
-        audioSessionPreferredSampleRate: 44100.0,
-        audioSessionPreferredIOBufferDuration: 0.005,
-        configureAudioSession: false,
-        ringtonePath: 'system_ringtone_default',
-        maximumCallGroups: 1,
-        maximumCallsPerCallGroup: 1,
-      ),
+  // ── iOS: time-sensitive local notification (mirrors to Wahoo via ANCS) ──────
+  Future<void> _showIosNotif(String callerName) async {
+    Log.i('Call', 'iOS local notif → "$callerName"');
+    const details = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: false,
+      presentSound: true,
+      presentBanner: true,
+      interruptionLevel: InterruptionLevel.timeSensitive,
     );
-    await FlutterCallkitIncoming.showCallkitIncoming(params);
-  }
-
-  Future<void> _endIosCall() async {
-    if (_activeCallId == null) return;
-    await FlutterCallkitIncoming.endCall(_activeCallId!);
-    _activeCallId = null;
+    await _notif.show(
+      _kNotifId,
+      'Bell',
+      callerName,
+      const NotificationDetails(iOS: details),
+    );
   }
 
   // ── Android: MethodChannel → CallStyle notification ────────────────────────
@@ -117,7 +92,7 @@ class CallService {
 
   Future<void> _dismiss() async {
     if (Platform.isIOS) {
-      await _endIosCall();
+      await _notif.cancel(_kNotifId);
     } else {
       await _notif.cancel(_kNotifId);
       try {

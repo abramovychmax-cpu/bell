@@ -20,14 +20,8 @@ dependencies:
   # Foreground service on Android (keeps BLE alive during ride)
   flutter_foreground_task: ^8.15.0
 
-  # Notifications (CallStyle on Android, mirrors to Wahoo)
+  # Notifications (CallStyle on Android + time-sensitive banner on iOS)
   flutter_local_notifications: ^18.0.1
-
-  # iOS CallKit — fake incoming call shown on lock screen + Wahoo
-  flutter_callkit_incoming: ^3.0.0
-
-  # UUID for call IDs
-  uuid: ^4.5.1
 
   # Log file storage + sharing
   path_provider: ^2.1.5
