@@ -18,6 +18,8 @@ class CallService {
   final FlutterLocalNotificationsPlugin _notif =
       FlutterLocalNotificationsPlugin();
   bool _initialized = false;
+  int _notifCounter = 0; // incremented each trigger for unique ANCS delivery
+  int _lastNotifId = -1;
 
   Future<void> init() async {
     const android = AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -52,8 +54,14 @@ class CallService {
   }
 
   // ── iOS: time-sensitive local notification (mirrors to Wahoo via ANCS) ──────
+  // Each call uses a NEW notification ID so iOS sends a fresh ANCS event to
+  // the Wahoo. Updating the same ID in-place does NOT generate a new ANCS push.
   Future<void> _showIosNotif(String callerName) async {
-    Log.i('Call', 'iOS local notif → "$callerName"');
+    // Cancel the previous notification so it doesn't pile up on the iPhone.
+    if (_lastNotifId >= 0) await _notif.cancel(_lastNotifId);
+    final id = ++_notifCounter % 1000; // keep IDs in a small rolling window
+    _lastNotifId = id;
+    Log.i('Call', 'iOS local notif id=$id → "$callerName"');
     const details = DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: false,
@@ -62,7 +70,7 @@ class CallService {
       interruptionLevel: InterruptionLevel.timeSensitive,
     );
     await _notif.show(
-      _kNotifId,
+      id,
       'Bell',
       callerName,
       const NotificationDetails(iOS: details),
@@ -92,7 +100,7 @@ class CallService {
 
   Future<void> _dismiss() async {
     if (Platform.isIOS) {
-      await _notif.cancel(_kNotifId);
+      if (_lastNotifId >= 0) await _notif.cancel(_lastNotifId);
     } else {
       await _notif.cancel(_kNotifId);
       try {
