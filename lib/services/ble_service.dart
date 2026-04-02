@@ -272,8 +272,7 @@ class BleService extends ChangeNotifier {
                 if (!_holdFiredChannels.contains(chNum)) {
                   _holdFiredChannels.add(chNum);
                   final enabled =
-                      (chNum == 1 && _storage.climbAEnabled) || // Ch.1 = left A
-                      (chNum == 4 && _storage.climbBEnabled);  // Ch.4 = right A
+                      (chNum == 2 && _storage.climbAEnabled);  // Ch.2 = left A
                   if (enabled) {
                     Log.i('BLE', 'Enabled long press on D-Fly Ch.$chNum → starting 1-second bell timer');
                     _holdTimer?.cancel();
